@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using FSharp.Compiler.CodeAnalysis;
 using FSharp.Compiler.Text;
 using FSharp.Compiler.Tokenization;
+using Microsoft.FSharp.Collections;
 using Microsoft.CodeAnalysis.Classification;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.Extensions.Logging;
@@ -83,7 +84,6 @@ public class FSharpSyntaxHighlightingService(ILogger<FSharpSyntaxHighlightingSer
 
             // Get classified spans from the parsed tokens
             var classifiedSpans = ConvertFSharpTokensToClassifiedSpans(
-                parseResults.TokenizedLines,
                 sourceText,
                 filePath);
             
@@ -105,14 +105,16 @@ public class FSharpSyntaxHighlightingService(ILogger<FSharpSyntaxHighlightingSer
     }
 
     private ImmutableArray<SharpIdeFSharpClassifiedSpan> ConvertFSharpTokensToClassifiedSpans(
-        FSharpList<FSharpTokenizerLine> tokenizedLines,
         string sourceText,
         string filePath)
     {
         var spans = new List<SharpIdeFSharpClassifiedSpan>();
         var lines = sourceText.Split('\n');
         
-        foreach (var tokenizedLine in tokenizedLines)
+        // Create a lexer for tokenization
+        var lexer = FSharpLexer.Create(sourceText, filePath);
+        
+        foreach (var tokenizedLine in lexer)
         {
             var lineNumber = tokenizedLine.LineNumber;
             if (lineNumber < 0 || lineNumber >= lines.Length)
