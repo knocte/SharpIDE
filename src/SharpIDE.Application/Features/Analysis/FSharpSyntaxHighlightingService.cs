@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using FSharp.Compiler.CodeAnalysis;
 using FSharp.Compiler.Text;
+using FSharp.Compiler.Tokenization;
 using Microsoft.CodeAnalysis.Classification;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.Extensions.Logging;
