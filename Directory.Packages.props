@@ -43,6 +43,7 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.Remote.Razor" Version="10.0.0-preview.26120.116" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Razor.Workspaces" Version="10.0.0-preview.26120.116" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.5.0-2.26120.116" />
+    <PackageVersion Include="FSharp.Compiler.Service" Version="43.9.0" />
     <PackageVersion Include="Microsoft.Diagnostics.NETCore.Client" Version="0.2.652701" />
     <PackageVersion Include="Microsoft.DotNet.Arcade.Sdk" Version="9.0.0-beta.24372.7" />
     <PackageVersion Include="Microsoft.Net.Compilers.Razor.Toolset" Version="10.0.0-preview.26120.116" />

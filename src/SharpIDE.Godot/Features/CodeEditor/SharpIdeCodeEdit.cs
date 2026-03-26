@@ -57,6 +57,7 @@ public partial class SharpIdeCodeEdit : CodeEdit
     [Inject] private readonly IdeOpenTabsFileManager _openTabsFileManager = null!;
     [Inject] private readonly RunService _runService = null!;
     [Inject] private readonly RoslynAnalysis _roslynAnalysis = null!;
+    [Inject] private readonly FSharpSyntaxHighlightingService _fSharpSyntaxHighlightingService = null!;
     [Inject] private readonly IdeCodeActionService _ideCodeActionService = null!;
     [Inject] private readonly FileChangedService _fileChangedService = null!;
     [Inject] private readonly IdeApplyCompletionService _ideApplyCompletionService = null!;
@@ -340,6 +341,13 @@ public partial class SharpIdeCodeEdit : CodeEdit
 				}, configureAwait: false);
 		}
 		
+		// Handle F# files differently from C#/Razor files
+		if (file.IsFsharpFile)
+		{
+			await SetSharpIdeFSharpFile(file, readFileTask, fileLinePosition);
+			return;
+		}
+
 		var syntaxHighlighting = _roslynAnalysis.GetDocumentSyntaxHighlighting(_currentFile);
 		var razorSyntaxHighlighting = _roslynAnalysis.GetRazorDocumentSyntaxHighlighting(_currentFile);
 		var diagnostics = _roslynAnalysis.GetDocumentDiagnostics(_currentFile);
@@ -362,6 +370,25 @@ public partial class SharpIdeCodeEdit : CodeEdit
 			await this.InvokeAsync(async () => SetDiagnostics(await diagnostics));
 			await analyzerDiagnostics;
 			await this.InvokeAsync(async () => SetAnalyzerDiagnostics(await analyzerDiagnostics));
+		});
+	}
+
+	private async Task SetSharpIdeFSharpFile(SharpIdeFile file, Task<string> readFileTask, SharpIdeFileLinePosition? fileLinePosition)
+	{
+		var fsharpSyntaxHighlighting = _fSharpSyntaxHighlightingService.GetFSharpDocumentSyntaxHighlightingAsync(_currentFile);
+		await readFileTask;
+		var setTextTask = this.InvokeAsync(async () =>
+		{
+			_fileChangingSuppressBreakpointToggleEvent = true;
+			SetText(await readFileTask);
+			_fileChangingSuppressBreakpointToggleEvent = false;
+			ClearUndoHistory();
+			if (fileLinePosition is not null) SetFileLinePosition(fileLinePosition.Value);
+		});
+		_ = Task.GodotRun(async () =>
+		{
+			await Task.WhenAll(fsharpSyntaxHighlighting, setTextTask); // Text must be set before setting syntax highlighting
+			await this.InvokeAsync(async () => SetFSharpSyntaxHighlightingModel(await fsharpSyntaxHighlighting));
 		});
 	}
 
@@ -604,6 +631,15 @@ public partial class SharpIdeCodeEdit : CodeEdit
 		_syntaxHighlighter.SetHighlightingData(classifiedSpans, razorClassifiedSpans);
 		//_syntaxHighlighter.ClearHighlightingCache();
 		_syntaxHighlighter.UpdateCache(); // I don't think this does anything, it will call _UpdateCache which we have not implemented
+		SyntaxHighlighter = null;
+		SyntaxHighlighter = _syntaxHighlighter; // Reassign to trigger redraw
+	}
+
+	[RequiresGodotUiThread]
+	private void SetFSharpSyntaxHighlightingModel(ImmutableArray<SharpIdeFSharpClassifiedSpan> fsharpClassifiedSpans)
+	{
+		_syntaxHighlighter.SetFSharpHighlightingData(fsharpClassifiedSpans);
+		_syntaxHighlighter.UpdateCache();
 		SyntaxHighlighter = null;
 		SyntaxHighlighter = _syntaxHighlighter; // Reassign to trigger redraw
 	}

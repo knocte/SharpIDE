@@ -16,6 +16,7 @@ public partial class CustomHighlighter : SyntaxHighlighter
 
     private System.Collections.Generic.Dictionary<int, ImmutableArray<SharpIdeRazorClassifiedSpan>> _razorClassifiedSpansByLine = [];
     private System.Collections.Generic.Dictionary<int, ImmutableArray<SharpIdeClassifiedSpan>> _classifiedSpansByLine = [];
+    private System.Collections.Generic.Dictionary<int, ImmutableArray<SharpIdeFSharpClassifiedSpan>> _fsharpClassifiedSpansByLine = [];
 
     public EditorThemeColorSet ColourSetForTheme = null!;
     
@@ -46,6 +47,19 @@ public partial class CustomHighlighter : SyntaxHighlighter
         _classifiedSpansByLine = spansGroupedByFileSpan.ToDictionary(g => g.Key, g => g.ToImmutableArray());
     }
 
+    public void SetFSharpHighlightingData(ImmutableArray<SharpIdeFSharpClassifiedSpan> fsharpClassifiedSpans)
+    {
+        var spansGroupedByLine = fsharpClassifiedSpans
+            .Where(s => s.FileSpan.Span.Length is not 0)
+            .GroupBy(span => span.LineIndex);
+
+        _fsharpClassifiedSpansByLine = spansGroupedByLine.ToDictionary(g => g.Key, g => g.ToImmutableArray());
+
+        // Clear C#/Razor spans when setting F# data
+        _classifiedSpansByLine = [];
+        _razorClassifiedSpansByLine = [];
+    }
+
     // Indicates that lines were removed or added, and the overall result of that is that a line (wasLineNumber), is now (becameLineNumber)
     // So if you added a line above line 10, then wasLineNumber=10, becameLineNumber=11
     // If you removed a line above line 10, then wasLineNumber=10, becameLineNumber=9
@@ -69,6 +83,7 @@ public partial class CustomHighlighter : SyntaxHighlighter
     {
         _razorClassifiedSpansByLine = Rearrange(_razorClassifiedSpansByLine, fromLine, difference, origin);
         _classifiedSpansByLine = Rearrange(_classifiedSpansByLine, fromLine, difference, origin);
+        _fsharpClassifiedSpansByLine = RearrangeFSharp(_fsharpClassifiedSpansByLine, fromLine, difference, origin);
         return;
 
         static System.Collections.Generic.Dictionary<int, T> Rearrange<T>(System.Collections.Generic.Dictionary<int, T> existingDictionary, long fromLine, int difference, SharpIdeCodeEdit.LineEditOrigin origin)
@@ -91,12 +106,28 @@ public partial class CustomHighlighter : SyntaxHighlighter
             }
             return newDict;
         }
+
+        static System.Collections.Generic.Dictionary<int, SharpIdeFSharpClassifiedSpan> RearrangeFSharp(System.Collections.Generic.Dictionary<int, SharpIdeFSharpClassifiedSpan> existingDictionary, long fromLine, int difference, SharpIdeCodeEdit.LineEditOrigin origin)
+        {
+            var newDict = new System.Collections.Generic.Dictionary<int, SharpIdeFSharpClassifiedSpan>();
+            foreach (var kvp in existingDictionary)
+            {
+                bool shouldShift =
+                    kvp.Key > fromLine ||
+                    (origin == SharpIdeCodeEdit.LineEditOrigin.StartOfLine && kvp.Key == fromLine);
+
+                int newKey = shouldShift ? kvp.Key + difference : kvp.Key;
+                newDict[newKey] = kvp.Value;
+            }
+            return newDict;
+        }
     }
     
     private void LinesRemoved(long fromLine, int numberOfLinesRemoved)
     {
         _classifiedSpansByLine = Rearrange(_classifiedSpansByLine, fromLine, numberOfLinesRemoved);
         _razorClassifiedSpansByLine = Rearrange(_razorClassifiedSpansByLine, fromLine, numberOfLinesRemoved);
+        _fsharpClassifiedSpansByLine = RearrangeFSharp(_fsharpClassifiedSpansByLine, fromLine, numberOfLinesRemoved);
         return;
 
         static System.Collections.Generic.Dictionary<int, T> Rearrange<T>(System.Collections.Generic.Dictionary<int, T> existingDictionary, long fromLine, int numberOfLinesRemoved)
@@ -116,7 +147,28 @@ public partial class CustomHighlighter : SyntaxHighlighter
                 else if (kvp.Key >= fromLine + numberOfLinesRemoved)
                 {
                     newDict[kvp.Key - numberOfLinesRemoved] = kvp.Value;
-                } 
+                }
+            }
+            return newDict;
+        }
+
+        static System.Collections.Generic.Dictionary<int, SharpIdeFSharpClassifiedSpan> RearrangeFSharp(System.Collections.Generic.Dictionary<int, SharpIdeFSharpClassifiedSpan> existingDictionary, long fromLine, int numberOfLinesRemoved)
+        {
+            var newDict = new System.Collections.Generic.Dictionary<int, SharpIdeFSharpClassifiedSpan>();
+            foreach (var kvp in existingDictionary)
+            {
+                if (kvp.Key < fromLine)
+                {
+                    newDict[kvp.Key] = kvp.Value;
+                }
+                else if (kvp.Key == fromLine)
+                {
+                    newDict[kvp.Key - numberOfLinesRemoved] = kvp.Value;
+                }
+                else if (kvp.Key >= fromLine + numberOfLinesRemoved)
+                {
+                    newDict[kvp.Key - numberOfLinesRemoved] = kvp.Value;
+                }
             }
             return newDict;
         }
@@ -124,13 +176,47 @@ public partial class CustomHighlighter : SyntaxHighlighter
     
     public override Dictionary _GetLineSyntaxHighlighting(int line)
     {
-        var highlights = (_classifiedSpansByLine, _razorClassifiedSpansByLine) switch
+        var highlights = (_classifiedSpansByLine, _razorClassifiedSpansByLine, _fsharpClassifiedSpansByLine) switch
         {
-            ({ Count: 0 }, { Count: 0 }) => _emptyDict,
-            ({ Count: > 0 }, _) => MapClassifiedSpansToHighlights(line),
-            (_, { Count: > 0 }) => MapRazorClassifiedSpansToHighlights(line),
-            _ => throw new NotImplementedException("Both ClassifiedSpans and RazorClassifiedSpans are set. This is not supported yet.")
+            ({ Count: 0 }, { Count: 0 }, { Count: 0 }) => _emptyDict,
+            ({ Count: > 0 }, _, _) => MapClassifiedSpansToHighlights(line),
+            (_, { Count: > 0 }, _) => MapRazorClassifiedSpansToHighlights(line),
+            (_, _, { Count: > 0 }) => MapFSharpClassifiedSpansToHighlights(line),
+            _ => throw new NotImplementedException("Multiple highlighting data sources are set. This is not supported yet.")
         };
+
+        return highlights;
+    }
+
+    private Dictionary MapFSharpClassifiedSpansToHighlights(int line)
+    {
+        var highlights = new Dictionary();
+        if (_fsharpClassifiedSpansByLine.TryGetValue(line, out var fsharpSpansForLine) is false) return highlights;
+
+        // group by span (start, length matches)
+        var spansGroupedByFileSpan = fsharpSpansForLine
+            .GroupBy(span => span.FileSpan)
+            .Select(group => (fileSpan: group.Key, classifiedSpans: group.Select(s => s.ClassifiedSpan).ToList()));
+
+        foreach (var (fileSpan, classifiedSpans) in spansGroupedByFileSpan)
+        {
+            if (classifiedSpans.Count > 2) throw new NotImplementedException("More than 2 classified spans is not supported yet.");
+            if (classifiedSpans.Count is not 1)
+            {
+                ClassifiedSpan? staticClassifiedSpan = classifiedSpans.FirstOrDefault(s => s.ClassificationType == "fsharp.static");
+                if (staticClassifiedSpan != default) classifiedSpans.Remove(staticClassifiedSpan.Value);
+            }
+            // Column index of the first character in this span
+            int columnIndex = fileSpan.Start.Character;
+
+            // Build the highlight entry
+            var highlightInfo = new Dictionary
+            {
+                { ColorStringName, ClassificationToColorMapper.GetColorForClassification(ColourSetForTheme, classifiedSpans.Single().ClassificationType) }
+            };
+
+            highlights[columnIndex] = highlightInfo;
+        }
 
         return highlights;
     }

@@ -42,6 +42,7 @@ public static class DependencyInjection
 		services.AddScoped<EditorCaretPositionService>();
 		services.AddScoped<SharpIdeMetadataAsSourceService>();
 		services.AddScoped<DotnetTemplateService>();
+		services.AddScoped<FSharpSyntaxHighlightingService>();
 		services.AddLogging();
 		return services;
 	}

@@ -15,9 +15,14 @@ public class SharpIdeFile : ISharpIdeNode, IChildSharpIdeNode, IFileOrFolder
 	public required string Extension { get; set; }
 	public bool IsRazorFile => Path.EndsWith(".razor", StringComparison.OrdinalIgnoreCase);
 	public bool IsCsprojFile => Path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase);
+	public bool IsFsprojFile => Path.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase);
 	public bool IsCshtmlFile => Path.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase);
 	public bool IsCsharpFile => Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase);
+	public bool IsFsharpFile => Path.EndsWith(".fs", StringComparison.OrdinalIgnoreCase)
+	                         || Path.EndsWith(".fsx", StringComparison.OrdinalIgnoreCase)
+	                         || Path.EndsWith(".fsi", StringComparison.OrdinalIgnoreCase);
 	public bool IsRoslynWorkspaceFile => IsCsharpFile || IsRazorFile || IsCshtmlFile;
+	public bool IsFsharpWorkspaceFile => IsFsharpFile;
 	public bool IsMetadataAsSourceFile { get; set; }
 	public string? PdbSourceFilePathForDebugger { get; set; }
 	public GitFileStatus GitStatus { get; set; } = GitFileStatus.Unaltered;
