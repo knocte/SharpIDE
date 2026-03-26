@@ -33,6 +33,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="FSharp.Compiler.Service" />
     <PackageReference Include="CliWrap" />
     <PackageReference Include="FileWatcherEx" />
     <PackageReference Include="ICSharpCode.Decompiler" />
