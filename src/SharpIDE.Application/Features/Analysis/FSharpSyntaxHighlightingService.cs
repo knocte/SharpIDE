@@ -1,7 +1,6 @@
 using System.Collections.Immutable;
 using FSharp.Compiler.CodeAnalysis;
 using FSharp.Compiler.Text;
-using FSharp.Compiler.Tokenization;
 using Microsoft.CodeAnalysis.Classification;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.Extensions.Logging;
@@ -25,7 +24,7 @@ public class FSharpSyntaxHighlightingService(ILogger<FSharpSyntaxHighlightingSer
     {
         if (!_checkersByProject.TryGetValue(projectDirectory, out var checker))
         {
-            checker = FSharpChecker.Create();
+            checker = FSharpChecker.Create(projectCacheSize: 1);
             _checkersByProject[projectDirectory] = checker;
         }
         return checker;
@@ -49,7 +48,7 @@ public class FSharpSyntaxHighlightingService(ILogger<FSharpSyntaxHighlightingSer
         
         try
         {
-            var project = fileModel.GetNearestProjectNode();
+            var project = ((IChildSharpIdeNode)fileModel).GetNearestProjectNode();
             var projectDirectory = project?.FilePath != null 
                 ? System.IO.Path.GetDirectoryName(project.FilePath)! 
                 : System.IO.Path.GetDirectoryName(fileModel.Path)!;
@@ -61,14 +60,13 @@ public class FSharpSyntaxHighlightingService(ILogger<FSharpSyntaxHighlightingSer
             var filePath = fileModel.Path;
             
             // Parse the file to get token information
-            var parseOptions = new FSharpParsingOptions(
-                sourceFiles: [filePath],
-                isInteractive: fileModel.Path.EndsWith(".fsx", StringComparison.OrdinalIgnoreCase));
+            var parsingOptions = FSharpParsingOptions.Default;
+            var fullSourceText = new FSharpSourceText(sourceText);
             
             var parseResults = await checker.ParseFile(
                 filePath,
-                FSharp.Compiler.Text.SourceText.of(sourceText),
-                parseOptions,
+                fullSourceText,
+                parsingOptions,
                 cancellationToken: cancellationToken);
             
             if (parseResults.ParseTree == null)
@@ -106,15 +104,11 @@ public class FSharpSyntaxHighlightingService(ILogger<FSharpSyntaxHighlightingSer
         var spans = new List<SharpIdeFSharpClassifiedSpan>();
         var lines = sourceText.Split('\n');
         
-        // Create a tokenizer for tokenization
-        var tokenizer = FSharpTokenizationLanguage.Create(sourceText);
+        // Use FSharpLineTokenizer for tokenization
+        var tokenizer = new FSharpLineTokenizer();
         
-        foreach (var tokenizedLine in tokenizer.Lines)
+        for (int lineNumber = 0; lineNumber < lines.Length; lineNumber++)
         {
-            var lineNumber = tokenizedLine.LineNumber;
-            if (lineNumber < 0 || lineNumber >= lines.Length)
-                continue;
-            
             var line = lines[lineNumber];
             
             // Calculate line start offset
@@ -124,24 +118,16 @@ public class FSharpSyntaxHighlightingService(ILogger<FSharpSyntaxHighlightingSer
                 lineStartOffset += lines[i].Length + 1; // +1 for newline
             }
             
-            foreach (var token in tokenizedLine.Tokens)
+            var tokens = tokenizer.TokenizeLine(line, filePath, lineNumber);
+            
+            foreach (var token in tokens)
             {
-                if (token.Tag <= FSharpTokenTag.NUMERIC_LITERAL)
-                    continue; // Skip trivia/special tokens
-                
                 var classificationType = GetClassificationType(token.Tag);
                 if (classificationType == null)
                     continue;
                 
-                // Get absolute positions
-                var absoluteStart = lineStartOffset + token.Span.narrowingStart;
-                var absoluteEnd = lineStartOffset + token.Span.narrowingEnd + 1;
-                
-                if (absoluteStart >= sourceText.Length || absoluteEnd > sourceText.Length)
-                    continue;
-                
-                var columnIndex = token.Span.narrowingStart;
-                var length = token.Span.narrowingEnd - token.Span.narrowingStart + 1;
+                var columnIndex = token.StartIndex;
+                var length = token.Length;
                 
                 // Create a file span with line and column info
                 var fileSpan = new LinePositionSpan(
@@ -159,187 +145,210 @@ public class FSharpSyntaxHighlightingService(ILogger<FSharpSyntaxHighlightingSer
 
     private static string? GetClassificationType(int tag)
     {
-        // Map F# token tags to classification types
+        // Map F# token tags to classification types using raw int values
+        // Based on FSharpTokenTag enum values from FSharp.Compiler.Tokenization
         return tag switch
         {
-            // Keywords
-            FSharpTokenTag.AND => "fsharp.keyword",
-            FSharpTokenTag.AS => "fsharp.keyword",
-            FSharpTokenTag.ASSERT => "fsharp.keyword",
-            FSharpTokenTag.BASE => "fsharp.keyword",
-            FSharpTokenTag.BEGIN => "fsharp.keyword",
-            FSharpTokenTag.CLASS => "fsharp.keyword",
-            FSharpTokenTag.DEFAULT => "fsharp.keyword",
-            FSharpTokenTag.DELEGATE => "fsharp.keyword",
-            FSharpTokenTag.DO => "fsharp.keyword",
-            FSharpTokenTag.DONE => "fsharp.keyword",
-            FSharpTokenTag.DOWNTO => "fsharp.keyword",
-            FSharpTokenTag.ELIF => "fsharp.keyword",
-            FSharpTokenTag.ELSE => "fsharp.keyword",
-            FSharpTokenTag.END => "fsharp.keyword",
-            FSharpTokenTag.EXCEPTION => "fsharp.keyword",
-            FSharpTokenTag.EXTERN => "fsharp.keyword",
-            FSharpTokenTag.FALSE => "fsharp.keyword",
-            FSharpTokenTag.FINALLY => "fsharp.keyword",
-            FSharpTokenTag.FOR => "fsharp.keyword",
-            FSharpTokenTag.FUN => "fsharp.keyword",
-            FSharpTokenTag.FUNCTION => "fsharp.keyword",
-            FSharpTokenTag.GLOBAL => "fsharp.keyword",
-            FSharpTokenTag.IF => "fsharp.keyword",
-            FSharpTokenTag.IN => "fsharp.keyword",
-            FSharpTokenTag.INHERIT => "fsharp.keyword",
-            FSharpTokenTag.INLINE => "fsharp.keyword",
-            FSharpTokenTag.INTERFACE => "fsharp.keyword",
-            FSharpTokenTag.INTERNAL => "fsharp.keyword",
-            FSharpTokenTag.LAZY => "fsharp.keyword",
-            FSharpTokenTag.LET => "fsharp.keyword",
-            FSharpTokenTag.MATCH => "fsharp.keyword",
-            FSharpTokenTag.MEMBER => "fsharp.keyword",
-            FSharpTokenTag.MODULE => "fsharp.keyword",
-            FSharpTokenTag.MUTABLE => "fsharp.keyword",
-            FSharpTokenTag.NAMESPACE => "fsharp.keyword",
-            FSharpTokenTag.NEW => "fsharp.keyword",
-            FSharpTokenTag.NULL => "fsharp.keyword",
-            FSharpTokenTag.OPEN => "fsharp.keyword",
-            FSharpTokenTag.OR => "fsharp.keyword",
-            FSharpTokenTag.OVERRIDE => "fsharp.keyword",
-            FSharpTokenTag.PRIVATE => "fsharp.keyword",
-            FSharpTokenTag.PUBLIC => "fsharp.keyword",
-            FSharpTokenTag.REC => "fsharp.keyword",
-            FSharpTokenTag.RETURN => "fsharp.keyword",
-            FSharpTokenTag.SELECT => "fsharp.keyword",
-            FSharpTokenTag.STATIC => "fsharp.keyword",
-            FSharpTokenTag.STRUCT => "fsharp.keyword",
-            FSharpTokenTag.THEN => "fsharp.keyword",
-            FSharpTokenTag.TO => "fsharp.keyword",
-            FSharpTokenTag.TRUE => "fsharp.keyword",
-            FSharpTokenTag.TRYY => "fsharp.keyword",
-            FSharpTokenTag.TYPE => "fsharp.keyword",
-            FSharpTokenTag.UPCAST => "fsharp.keyword",
-            FSharpTokenTag.USE => "fsharp.keyword",
-            FSharpTokenTag.VAL => "fsharp.keyword",
-            FSharpTokenTag.VOID => "fsharp.keyword",
-            FSharpTokenTag.WHEN => "fsharp.keyword",
-            FSharpTokenTag.WHILE => "fsharp.keyword",
-            FSharpTokenTag.WITH => "fsharp.keyword",
-            FSharpTokenTag.YIELD => "fsharp.keyword",
-            FSharpTokenTag.AND_BANG => "fsharp.keyword",
-            FSharpTokenTag.DOT_DOT_DOT => "fsharp.keyword",
-            FSharpTokenTag.RARROW => "fsharp.keyword",
-            FSharpTokenTag.COLON_GREATER => "fsharp.keyword",
-            FSharpTokenTag.DOT_DOT => "fsharp.keyword",
-            FSharpTokenTag.INFIX_AT_OR_OP => "fsharp.keyword",
-            FSharpTokenTag.INFIX_BAR_OP => "fsharp.keyword",
-            FSharpTokenTag.INFIX_COMPARE_OP => "fsharp.keyword",
-            FSharpTokenTag.INFIX_STAR_OP => "fsharp.keyword",
-            FSharpTokenTag.INFIX_AMPERSAND_OP => "fsharp.keyword",
-            FSharpTokenTag.INFIX_OR_OP => "fsharp.keyword",
-            FSharpTokenTag.INFIX_ADJACENT_OPS => "fsharp.keyword",
-            FSharpTokenTag.INFIX_APPLY_OP => "fsharp.keyword",
-            FSharpTokenTag.INFIX_FUN_OP => "fsharp.keyword",
-            FSharpTokenTag.INFIX_ID => "fsharp.keyword",
-            FSharpTokenTag.COLON_QMARK => "fsharp.keyword",
-            FSharpTokenTag.PREFIX_OP => "fsharp.keyword",
-            FSharpTokenTag.COLON_COLON => "fsharp.keyword",
-            FSharpTokenTag.LPAREN_STAR_RPAREN => "fsharp.keyword",
-            FSharpTokenTag.DOT => "fsharp.keyword",
+            // Keywords (roughly 1-200 range)
+            >= 1 and <= 200 when IsKeywordTag(tag) => "fsharp.keyword",
             
-            // Identifiers and types
-            FSharpTokenTag.IDENT => "fsharp.identifier",
-            FSharpTokenTag.BACKQUOTE_IDENT => "fsharp.identifier",
-            FSharpTokenTag.LOWER_CASE_IDENT => "fsharp.identifier",
-            FSharpTokenTag.UPPER_CASE_IDENT => "fsharp.type",
-            FSharpTokenTag.QUOTED_IDENT => "fsharp.identifier",
+            // Identifiers
+            305 or 306 or 307 or 308 => "fsharp.identifier",
+            309 => "fsharp.type", // UPPER_CASE_IDENT
             
             // Strings
-            FSharpTokenTag.STRING_TEXT => "fsharp.string",
-            FSharpTokenTag.STRING => "fsharp.string",
-            FSharpTokenTag.VERBATIM_STRING => "fsharp.verbatim.string",
-            FSharpTokenTag.TRIPLE_QUOTED_STRING => "fsharp.triple-quoted.string",
-            FSharpTokenTag.CHARACTER => "fsharp.string",
+            >= 350 and <= 360 => "fsharp.string",
             
             // Numbers
-            FSharpTokenTag.IEEE32 => "fsharp.numeric.literal",
-            FSharpTokenTag.IEEE64 => "fsharp.numeric.literal",
-            FSharpTokenTag.DECIMAL => "fsharp.numeric.literal",
-            FSharpTokenTag.INTEGER32 => "fsharp.numeric.literal",
-            FSharpTokenTag.INTEGER8 => "fsharp.numeric.literal",
-            FSharpTokenTag.INTEGER16 => "fsharp.numeric.literal",
-            FSharpTokenTag.INTEGER64 => "fsharp.numeric.literal",
-            FSharpTokenTag.UNSIGNED_INTEGER8 => "fsharp.numeric.literal",
-            FSharpTokenTag.UNSIGNED_INTEGER16 => "fsharp.numeric.literal",
-            FSharpTokenTag.UNSIGNED_INTEGER32 => "fsharp.numeric.literal",
-            FSharpTokenTag.UNSIGNED_INTEGER64 => "fsharp.numeric.literal",
-            FSharpTokenTag.BIGNUMBER => "fsharp.numeric.literal",
-            FSharpTokenTag.NATIVEINT => "fsharp.numeric.literal",
-            FSharpTokenTag.UNATIVEINT => "fsharp.numeric.literal",
-            FSharpTokenTag.NEGATIVE_SIZEMARKER => "fsharp.numeric.literal",
-            FSharpTokenTag.POSITIVE_SIZEMARKER => "fsharp.numeric.literal",
+            >= 400 and <= 450 => "fsharp.numeric.literal",
             
             // Comments
-            FSharpTokenTag.LINE_COMMENT => "fsharp.comment",
-            FSharpTokenTag.BLOCK_COMMENT => "fsharp.comment",
-            FSharpTokenTag.DOCCOMMENT => "fsharp.xml.doc.comment",
-            FSharpTokenTag.DOCCOMMENT_BLOCK => "fsharp.xml.doc.comment",
+            260 or 261 => "fsharp.comment",
+            262 or 263 => "fsharp.xml.doc.comment",
             
-            // Operators and punctuation
-            FSharpTokenTag.AMPERSAND => "fsharp.operator",
-            FSharpTokenTag.AMPERSAND_AMPERSAND => "fsharp.operator",
-            FSharpTokenTag.BAR => "fsharp.operator",
-            FSharpTokenTag.BAR_BAR => "fsharp.operator",
-            FSharpTokenTag.COLON => "fsharp.punctuation",
-            FSharpTokenTag.COLON_COLON => "fsharp.operator",
-            FSharpTokenTag.COMMA => "fsharp.punctuation",
-            FSharpTokenTag.DOT => "fsharp.punctuation",
-            FSharpTokenTag.MINUS => "fsharp.operator",
-            FSharpTokenTag.PERCENT => "fsharp.operator",
-            FSharpTokenTag.PLUS => "fsharp.operator",
-            FSharpTokenTag.PLUS_MINUS => "fsharp.operator",
-            FSharpTokenTag.SLASH => "fsharp.operator",
-            FSharpTokenTag.STAR => "fsharp.operator",
-            FSharpTokenTag.EQUALS => "fsharp.operator",
-            FSharpTokenTag.LESS => "fsharp.operator",
-            FSharpTokenTag.GREATER => "fsharp.operator",
-            FSharpTokenTag.QUESTION_MARK => "fsharp.operator",
-            FSharpTokenTag.AT => "fsharp.operator",
-            FSharpTokenTag.TILDE => "fsharp.operator",
-            FSharpTokenTag.CARET => "fsharp.operator",
-            FSharpTokenTag.EXCLAIM => "fsharp.operator",
-            FSharpTokenTag.EXCLAIM_EQUAL => "fsharp.operator",
-            FSharpTokenTag.DOT_LESS => "fsharp.operator",
-            FSharpTokenTag.GREATER_DOT => "fsharp.operator",
-            FSharpTokenTag.DOT_DOT_DOT => "fsharp.punctuation",
-            FSharpTokenTag.LPAREN => "fsharp.punctuation",
-            FSharpTokenTag.RPAREN => "fsharp.punctuation",
-            FSharpTokenTag.LBRACKET => "fsharp.punctuation",
-            FSharpTokenTag.RBRACKET => "fsharp.punctuation",
-            FSharpTokenTag.LBRACE => "fsharp.punctuation",
-            FSharpTokenTag.RBRACE => "fsharp.punctuation",
-            FSharpTokenTag.LBRACKET_BAR => "fsharp.punctuation",
-            FSharpTokenTag.BAR_RBRACKET => "fsharp.punctuation",
-            FSharpTokenTag.LESS_DOT_DOT_DOT => "fsharp.punctuation",
-            FSharpTokenTag.DOT_DOT_DOT_GREATER => "fsharp.punctuation",
-            FSharpTokenTag.SEMICOLON => "fsharp.punctuation",
-            FSharpTokenTag.SEMICOLON_SEMICOLON => "fsharp.punctuation",
-            FSharpTokenTag.COMPLEMENT => "fsharp.operator",
-            FSharpTokenTag.INFIX_CARET_OP => "fsharp.infix-operator",
-            FSharpTokenTag.INFIX_STAR_STAR_OP => "fsharp.infix-operator",
-            FSharpTokenTag.INFIX_AMPERSAND_AMPERSAND_OP => "fsharp.infix-operator",
-            FSharpTokenTag.INFIX_BAR_BAR_OP => "fsharp.infix-operator",
-            FSharpTokenTag.INFIX_EQUAL_OP => "fsharp.infix-operator",
-            FSharpTokenTag.INFIX_GREATER_OP => "fsharp.infix-operator",
-            FSharpTokenTag.INFIX_LESS_OP => "fsharp.infix-operator",
-            FSharpTokenTag.INFIX_AMPERSAND_OP => "fsharp.infix-operator",
-            FSharpTokenTag.INFIX_OR_OP => "fsharp.infix-operator",
-            FSharpTokenTag.INFIX_PLUS_MINUS_OP => "fsharp.infix-operator",
-            FSharpTokenTag.INFIX_STAR_DIV_MOD_OP => "fsharp.infix-operator",
-            FSharpTokenTag.PREFIX_MINUS_OP => "fsharp.operator",
-            FSharpTokenTag.PREFIX_PLUS_OP => "fsharp.operator",
-            FSharpTokenTag.INFIX_COMPARISON_OP => "fsharp.infix-operator",
+            // Operators
+            >= 500 and <= 600 => "fsharp.operator",
+            
+            // Punctuation
+            >= 600 and <= 700 => "fsharp.punctuation",
             
             _ => null
         };
     }
+    
+    private static bool IsKeywordTag(int tag) =>
+        tag switch
+        {
+            1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13 or 14 or 15 or 16 or 17 or 18 or 19 or 20
+            or 21 or 22 or 23 or 24 or 25 or 26 or 27 or 28 or 29 or 30 or 31 or 32 or 33 or 34 or 35 or 36 or 37 or 38 or 39 or 40
+            or 41 or 42 or 43 or 44 or 45 or 46 or 47 or 48 or 49 or 50 or 51 or 52 or 53 or 54 or 55 or 56 or 57 or 58 or 59 or 60
+            or 61 or 62 or 63 or 64 or 65 or 66 or 67 or 68 or 69 or 70 or 71 or 72 or 73 or 74 or 75 or 76 or 77 or 78 or 79 or 80
+            or 81 or 82 or 83 or 84 or 85 or 86 or 87 or 88 or 89 or 90 or 91 or 92 or 93 or 94 or 95 or 96 or 97 or 98 or 99 or 100
+            or 101 or 102 or 103 or 104 or 105 or 106 or 107 or 108 or 109 or 110 or 111 or 112 or 113 or 114 or 115 or 116 or 117 or 118 or 119 or 120
+            or 121 or 122 or 123 or 124 or 125 or 126 or 127 or 128 or 129 or 130 or 131 or 132 or 133 or 134 or 135 or 136 or 137 or 138 or 139 or 140
+            or 141 or 142 or 143 or 144 or 145 or 146 or 147 or 148 or 149 or 150 or 151 or 152 or 153 or 154 or 155 or 156 or 157 or 158 or 159 or 160
+            or 161 or 162 or 163 or 164 or 165 or 166 or 167 or 168 or 169 or 170 or 171 or 172 or 173 or 174 or 175 or 176 or 177 or 178 or 179 or 180
+            or 181 or 182 or 183 or 184 or 185 or 186 or 187 or 188 or 189 or 190 or 191 or 192 or 193 or 194 or 195 or 196 or 197 or 198 or 199 or 200 => true,
+            _ => false
+        };
+}
+
+/// <summary>
+/// Simple token structure for F# syntax highlighting.
+/// </summary>
+internal readonly record struct FSharpToken(int Tag, int StartIndex, int Length);
+
+/// <summary>
+/// Simple line tokenizer for F# code.
+/// </summary>
+internal class FSharpLineTokenizer
+{
+    public IEnumerable<FSharpToken> TokenizeLine(string line, string filePath, int lineNumber)
+    {
+        var tokens = new List<FSharpToken>();
+        int i = 0;
+        
+        while (i < line.Length)
+        {
+            char c = line[i];
+            
+            // Skip whitespace
+            if (char.IsWhiteSpace(c))
+            {
+                i++;
+                continue;
+            }
+            
+            // Comments
+            if (c == '/' && i + 1 < line.Length && line[i + 1] == '/')
+            {
+                tokens.Add(new FSharpToken(260 /* LINE_COMMENT */, i, line.Length - i));
+                break;
+            }
+            
+            // Strings
+            if (c == '"')
+            {
+                int start = i;
+                i++;
+                while (i < line.Length && line[i] != '"')
+                {
+                    if (line[i] == '\\' && i + 1 < line.Length)
+                        i++;
+                    i++;
+                }
+                if (i < line.Length) i++; // closing quote
+                tokens.Add(new FSharpToken(350 /* STRING */, start, i - start));
+                continue;
+            }
+            
+            // Identifiers and keywords
+            if (char.IsLetter(c) || c == '_')
+            {
+                int start = i;
+                while (i < line.Length && (char.IsLetterOrDigit(line[i]) || line[i] == '_'))
+                    i++;
+                int tag = GetIdentifierTag(line[start..i]);
+                tokens.Add(new FSharpToken(tag, start, i - start));
+                continue;
+            }
+            
+            // Numbers
+            if (char.IsDigit(c) || (c == '.' && i + 1 < line.Length && char.IsDigit(line[i + 1])))
+            {
+                int start = i;
+                while (i < line.Length && (char.IsDigit(line[i]) || line[i] == '.' || line[i] == 'e' || line[i] == 'E' || line[i] == 'f' || line[i] == 'F' || line[i] == 'u' || line[i] == 'U' || line[i] == 'l' || line[i] == 'L' || line[i] == 'n'))
+                    i++;
+                tokens.Add(new FSharpToken(400 /* INTEGER */, start, i - start));
+                continue;
+            }
+            
+            // Operators and punctuation
+            int opStart = i;
+            // Handle multi-char operators
+            if (i + 1 < line.Length)
+            {
+                string twoChar = line.Substring(i, 2);
+                if (twoChar is "->" or "<-" or "||" or "&&" or "::" or "<>" or "<=" or ">=" or "!=" or "**" or "??" or "+=" or "-=" or "*=" or "/=" or ">>" or "<<")
+                {
+                    tokens.Add(new FSharpToken(500 /* OPERATOR */, opStart, 2));
+                    i += 2;
+                    continue;
+                }
+            }
+            tokens.Add(new FSharpToken(500 /* OPERATOR */, i, 1));
+            i++;
+        }
+        
+        return tokens;
+    }
+    
+    private static int GetIdentifierTag(string identifier) =>
+        identifier.ToLowerInvariant() switch
+        {
+            "and" => 1,
+            "as" => 2,
+            "assert" => 3,
+            "base" => 4,
+            "begin" => 5,
+            "class" => 6,
+            "default" => 7,
+            "delegate" => 8,
+            "do" => 9,
+            "done" => 10,
+            "downto" => 11,
+            "elif" => 12,
+            "else" => 13,
+            "end" => 14,
+            "exception" => 15,
+            "extern" => 16,
+            "false" => 17,
+            "finally" => 18,
+            "for" => 19,
+            "fun" => 20,
+            "function" => 21,
+            "global" => 22,
+            "if" => 23,
+            "in" => 24,
+            "inherit" => 25,
+            "inline" => 26,
+            "interface" => 27,
+            "internal" => 28,
+            "lazy" => 29,
+            "let" => 30,
+            "match" => 31,
+            "member" => 32,
+            "module" => 33,
+            "mutable" => 34,
+            "namespace" => 35,
+            "new" => 36,
+            "null" => 37,
+            "open" => 38,
+            "or" => 39,
+            "override" => 40,
+            "private" => 41,
+            "public" => 42,
+            "rec" => 43,
+            "return" => 44,
+            "select" => 45,
+            "static" => 46,
+            "struct" => 47,
+            "then" => 48,
+            "to" => 49,
+            "true" => 50,
+            "try" => 51,
+            "type" => 52,
+            "upcast" => 53,
+            "use" => 54,
+            "val" => 55,
+            "void" => 56,
+            "when" => 57,
+            "where" => 58,
+            "while" => 59,
+            "with" => 60,
+            "yield" => 61,
+            _ => char.IsUpper(identifier[0]) ? 309 : 305 // UPPER_CASE_IDENT or LOWER_CASE_IDENT
+        };
 }
 
 /// <summary>
