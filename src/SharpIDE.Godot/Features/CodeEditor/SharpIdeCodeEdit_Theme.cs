@@ -20,5 +20,6 @@ public partial class SharpIdeCodeEdit
     private void UpdateEditorTheme(LightOrDarkTheme lightOrDarkTheme)
     {
         _syntaxHighlighter.UpdateThemeColorCache(lightOrDarkTheme);
-    }
+		(SyntaxHighlighter as FSharpSyntaxHighlighter)?.UpdateThemeColors(lightOrDarkTheme);
+	}
 }

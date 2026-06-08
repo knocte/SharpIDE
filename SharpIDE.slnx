@@ -20,6 +20,7 @@
   </Folder>
   <Folder Name="/src/">
     <File Path="src/update-sharpide.cs" />
+    <Project Path="src/SharpIDE.FSharp/SharpIDE.FSharp.fsproj" />
     <Project Path="src/SharpIDE.Application/SharpIDE.Application.csproj" />
     <Project Path="src/SharpIDE.Godot/SharpIDE.Godot.csproj">
       <BuildType Project="Debug" />

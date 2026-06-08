@@ -7,6 +7,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\SharpIDE.FSharp\SharpIDE.FSharp.fsproj" />
     <ProjectReference Include="..\..\tools\GodotServiceDefaults\GodotServiceDefaults.csproj" PrivateAssets="all" />
     <ProjectReference Include="..\SharpIDE.Application\SharpIDE.Application.csproj" />
      <!-- For build order -->
