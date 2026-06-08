@@ -4,12 +4,14 @@ namespace SharpIDE.Application.Features.SolutionDiscovery.VsPersistence;
 
 public static class IntermediateMapper
 {
+	static readonly private string[] _projectExtensions = [".csproj", ".fsproj"];
+
 	internal static async Task<IntermediateSolutionModel> GetIntermediateModel(string solutionFilePath, SolutionModel vsSolution, CancellationToken cancellationToken = default)
 	{
 		using var _ = SharpIdeOtel.Source.StartActivity();
 
-		// Remove any projects that aren't csproj, TODO: Instead of removing, display in the solution explorer that the project type isn't supported
-		foreach (var vsSolutionSolutionProject in vsSolution.SolutionProjects.Where(s => s.Extension is not ".csproj").ToList())
+		// Remove any projects that aren't recognized project type, TODO: Instead of removing, display in the solution explorer that the project type isn't supported
+		foreach (var vsSolutionSolutionProject in vsSolution.SolutionProjects.Where(s => !_projectExtensions.Contains(s.Extension)).ToList())
 		{
 			vsSolution.RemoveProject(vsSolutionSolutionProject);
 		}
