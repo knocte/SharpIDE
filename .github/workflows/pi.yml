@@ -1,0 +1,35 @@
+name: Pi Agent
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  pi-agent:
+    # HACK: GitHub Actions expressions don't support escape sequences like \n in string literals,
+    # so fromJSON('"\n"') is used to inject an actual newline character
+    if: |
+      contains(fromJson('["knocte", "webwarrior-ws"]'), github.actor) &&
+      (startsWith(github.event.comment.body, '/pi ') || contains(github.event.comment.body, format('{0}/pi ', fromJSON('"\n"'))))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Run Pi agent
+        # v2.19.2 => Pi 0.78.0
+        uses: shaftoe/pi-coding-agent-action@000a481921fa525abf2ccbcdee0ae25cd3b92835
+        with:
+          github_token: ${{ secrets.GH_BOT_CLASSIC_ACCESS_TOKEN }}
+          provider: ppq
+          model: autoclaw
+          token: ${{ secrets.PPQ_API_KEY }}
+          extensions: |
+            npm:awto-pi-lot
