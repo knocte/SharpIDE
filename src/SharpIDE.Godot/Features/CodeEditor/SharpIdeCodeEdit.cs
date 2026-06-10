@@ -31,6 +31,7 @@ public partial class SharpIdeCodeEdit : CodeEdit
 	public SharpIdeSolutionModel? Solution { get; set; }
 	public SharpIdeFile SharpIdeFile => _currentFile;
 	private SharpIdeFile _currentFile = null!;
+	private bool IsEditingFSharpFile => _currentFile != null && _currentFile.Extension == ".fs";
 
 	private CustomHighlighter _syntaxHighlighter = new();
 	private PopupMenu _popupMenu = null!;
@@ -178,6 +179,12 @@ public partial class SharpIdeCodeEdit : CodeEdit
 	// Multi cursor gets a single line event for each
 	private void OnLinesEditedFrom(long fromLine, long toLine)
 	{
+		if (IsEditingFSharpFile)
+		{
+			(SyntaxHighlighter as FSharpSyntaxHighlighter)?.SetSource(Text);
+			return;
+		}
+
 		if (fromLine == toLine) return;
 		if (_settingWholeDocumentTextSuppressLineEditsEvent) return;
 
@@ -271,6 +278,12 @@ public partial class SharpIdeCodeEdit : CodeEdit
 		var pendingCompletionTrigger = _pendingCompletionTrigger;
 		_pendingCompletionTrigger = null;
 		var cursorPosition = GetCaretPosition();
+
+		if (IsEditingFSharpFile)
+		{
+			(SyntaxHighlighter as FSharpSyntaxHighlighter)?.SetSource(text);
+		}
+
 		_ = Task.GodotRun(async () =>
 		{
 			var __ = SharpIdeOtel.Source.StartActivity($"{nameof(SharpIdeCodeEdit)}.{nameof(OnTextChanged)}");
@@ -365,11 +378,7 @@ public partial class SharpIdeCodeEdit : CodeEdit
 					await this.InvokeAsync(() => SetProjectDiagnostics(projectDiagnosticsForFile));
 				}, configureAwait: false);
 		}
-
-		var syntaxHighlighting = _roslynAnalysis.GetDocumentSyntaxHighlighting(_currentFile);
-		var razorSyntaxHighlighting = _roslynAnalysis.GetRazorDocumentSyntaxHighlighting(_currentFile);
-		var diagnostics = _roslynAnalysis.GetDocumentDiagnostics(_currentFile);
-		var analyzerDiagnostics = _roslynAnalysis.GetDocumentAnalyzerDiagnostics(_currentFile);
+		
 		await readFileTask;
 		var setTextTask = this.InvokeAsync(async () =>
 		{
@@ -380,15 +389,29 @@ public partial class SharpIdeCodeEdit : CodeEdit
 			if (fileLinePosition is not null) SetFileLinePosition(fileLinePosition.Value);
 			if (file.IsMetadataAsSourceFile) Editable = false;
 		});
-		_ = Task.GodotRun(async () =>
+
+		if (IsEditingFSharpFile)
 		{
-			await Task.WhenAll(syntaxHighlighting, razorSyntaxHighlighting, setTextTask); // Text must be set before setting syntax highlighting
-			await this.InvokeAsync(async () => SetSyntaxHighlightingModel(await syntaxHighlighting, await razorSyntaxHighlighting));
-			await diagnostics;
-			await this.InvokeAsync(async () => SetDiagnostics(await diagnostics));
-			await analyzerDiagnostics;
-			await this.InvokeAsync(async () => SetAnalyzerDiagnostics(await analyzerDiagnostics));
-		});
+			await setTextTask;
+			var source = this.Text.ToString();
+			SyntaxHighlighter = new FSharpSyntaxHighlighter(source);
+		}
+		else
+		{
+			var syntaxHighlighting = _roslynAnalysis.GetDocumentSyntaxHighlighting(_currentFile);
+			var razorSyntaxHighlighting = _roslynAnalysis.GetRazorDocumentSyntaxHighlighting(_currentFile);
+			var diagnostics = _roslynAnalysis.GetDocumentDiagnostics(_currentFile);
+			var analyzerDiagnostics = _roslynAnalysis.GetDocumentAnalyzerDiagnostics(_currentFile);
+			_ = Task.GodotRun(async () =>
+			{
+				await Task.WhenAll(syntaxHighlighting, razorSyntaxHighlighting, setTextTask); // Text must be set before setting syntax highlighting
+				await this.InvokeAsync(async () => SetSyntaxHighlightingModel(await syntaxHighlighting, await razorSyntaxHighlighting));
+				await diagnostics;
+				await this.InvokeAsync(async () => SetDiagnostics(await diagnostics));
+				await analyzerDiagnostics;
+				await this.InvokeAsync(async () => SetAnalyzerDiagnostics(await analyzerDiagnostics));
+			});
+		}
 	}
 
 	private async Task OnFileDeleted()
@@ -677,6 +700,12 @@ public partial class SharpIdeCodeEdit : CodeEdit
 	[RequiresGodotUiThread]
 	private void SetSyntaxHighlightingModel(ImmutableArray<SharpIdeClassifiedSpan> classifiedSpans, ImmutableArray<SharpIdeRazorClassifiedSpan> razorClassifiedSpans)
 	{
+		if (IsEditingFSharpFile)
+		{
+			// Not applicable to F# syntax highlighting, because this method passes results of Roslyn (C#-only) analysis
+			// to C# syntax highlighter and invalidates some caches.
+			return;
+		}
 		_syntaxHighlighter.SetHighlightingData(classifiedSpans, razorClassifiedSpans);
 		//_syntaxHighlighter.ClearHighlightingCache();
 		_syntaxHighlighter.UpdateCache(); // I don't think this does anything, it will call _UpdateCache which we have not implemented
